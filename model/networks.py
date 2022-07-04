@@ -179,8 +179,10 @@ class CoarseGenerator(nn.Module):
 #----------------------------------------------------------------------------
 
 class FineGenerator(nn.Module):
-    def __init__(self, cnum, return_flow=False):
+    def __init__(self, cnum, truncate=False, final_cnum=None, second_last_cnum=None, third_last_cnum=None, return_flow=False):
         super().__init__()
+        
+        self.return_flow = return_flow
      
         ### CONV BRANCH (B1) ### 
         self.conv_conv1 = GConv(3, cnum//2, 5, 1, padding=2)
@@ -222,12 +224,17 @@ class FineGenerator(nn.Module):
         self.conv_bn7 = GConv(2*cnum, 2*cnum, 3, 1)
 
         # upsampling
+        if third_last_cnum is None: third_last_cnum = cnum // 2
+        if second_last_cnum is None: second_last_cnum = cnum // 4
+        if final_cnum is None: final_cnum = 3
         self.up_block1 = GUpsamplingBlock(2*cnum, cnum)   
-        self.up_block2 = GUpsamplingBlock(cnum, cnum//4, cnum_hidden=cnum//2)
-
-        # to RGB
-        self.conv_to_rgb = GConv(cnum//4, 3, 3, 1, activation=None)
-        self.tanh = nn.Tanh()
+        self.up_block2 = GUpsamplingBlock(cnum, second_last_cnum, cnum_hidden=third_last_cnum)
+        self.conv_to_rgb = GConv(second_last_cnum, final_cnum, 3, 1, activation=None)
+        
+        self.truncate = truncate
+        if not self.truncate:
+            # to RGB
+            self.tanh = nn.Tanh()
 
     def forward(self, x, mask):        
         xnow = x
@@ -272,17 +279,24 @@ class FineGenerator(nn.Module):
 
         # to RGB
         x = self.conv_to_rgb(x)
-        x = self.tanh(x)
+        
+        if not self.truncate:
+            x = self.tanh(x)
 
-        return x, offset_flow
+        if self.return_flow:
+            return x, offset_flow
+        return x
 
 #----------------------------------------------------------------------------
 
 class Generator(nn.Module):
-    def __init__(self, cnum_in, cnum, return_flow=False):
+    def __init__(self, cnum_in, cnum, truncate=False, final_cnum=None, second_last_cnum=None, third_last_cnum=None, return_flow=False):
         super().__init__()
         self.stage1 = CoarseGenerator(cnum_in, cnum)
-        self.stage2 = FineGenerator(cnum, return_flow) 
+        self.stage2 = FineGenerator(cnum, 
+                                    truncate, 
+                                    final_cnum, second_last_cnum, third_last_cnum, 
+                                    return_flow=True) # Always returned from here
         self.return_flow = return_flow    
 
     def forward(self, x, mask):
